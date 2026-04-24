@@ -33,8 +33,8 @@ const FOOD_DB = [
 const MEAL_TYPES = [
   { id: 'breakfast', label: 'Breakfast', Icon: Sunrise, color: '#f59e0b' },
   { id: 'lunch', label: 'Lunch', Icon: Sun, color: '#10b981' },
-  { id: 'dinner', label: 'Dinner', Icon: Moon, color: '#8b5cf6' },
   { id: 'snack', label: 'Snack', Icon: Apple, color: '#06b6d4' },
+  { id: 'dinner', label: 'Dinner', Icon: Moon, color: '#8b5cf6' },
 ]
 
 function MacroRing({ label, value, total, color, size = 100 }) {
