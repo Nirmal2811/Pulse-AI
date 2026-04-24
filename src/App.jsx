@@ -1,8 +1,12 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { Toaster } from 'react-hot-toast'
+import { useEffect } from 'react'
 import { useFitness } from './context/FitnessContext'
 import { useLenis } from './hooks/useLenis'
 import { useIsMobile } from './hooks/useMediaQuery'
+import { auth, db } from './firebase'
+import { onAuthStateChanged } from 'firebase/auth'
+import { doc, getDoc } from 'firebase/firestore'
 import Sidebar from './components/layout/Sidebar'
 import Header from './components/layout/Header'
 import Dashboard from './components/Dashboard'
@@ -59,6 +63,36 @@ export default function App() {
   const { currentPage, sidebarOpen, isAuthenticated } = state
   const isMobile = useIsMobile()
   useLenis()
+
+  // Listen to Firebase auth state and auto-sync user data
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          // Fetch user data from Firestore
+          const userDocRef = doc(db, 'users', firebaseUser.uid)
+          const userDocSnap = await getDoc(userDocRef)
+          
+          if (userDocSnap.exists()) {
+            const userData = userDocSnap.data()
+            dispatch({
+              type: 'LOGIN',
+              payload: {
+                user: userData.profile || { id: firebaseUser.uid, email: firebaseUser.email },
+                data: userData
+              }
+            })
+          }
+        } catch (error) {
+          console.error('Error fetching user data:', error)
+        }
+      } else {
+        // User signed out
+        dispatch({ type: 'LOGOUT' })
+      }
+    })
+    return () => unsubscribe()
+  }, [dispatch])
 
   if (!isAuthenticated) {
     return (

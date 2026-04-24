@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { User, Save, Edit2, Camera, Award, Zap, Target, Dumbbell, Calendar, Scale, LogOut, Leaf, Flame, Trophy, Ruler, BarChart2, Activity, Droplets, Moon, Beef, Check } from 'lucide-react'
 import { useFitness } from '../context/FitnessContext'
+import { auth } from '../firebase'
+import { signOut } from 'firebase/auth'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -138,9 +140,15 @@ export default function UserProfile() {
         <motion.button
           whileHover={{ scale: 1.04 }}
           whileTap={{ scale: 0.97 }}
-          onClick={() => {
-            toast.success('Signed out. See you next time! 👋')
-            setTimeout(() => dispatch({ type: 'LOGOUT' }), 800)
+          onClick={async () => {
+            try {
+              await signOut(auth)
+              toast.success('Signed out. See you next time! 👋')
+              setTimeout(() => dispatch({ type: 'LOGOUT' }), 800)
+            } catch (error) {
+              console.error('Sign out error:', error)
+              toast.error('Error signing out')
+            }
           }}
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all text-sm font-medium"
         >
