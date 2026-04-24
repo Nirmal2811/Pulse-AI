@@ -1,4 +1,6 @@
 import { createContext, useContext, useReducer, useEffect } from 'react'
+import { auth, db } from '../firebase'
+import { doc, setDoc } from 'firebase/firestore'
 import { actionNotification, contextualNotifications } from '../utils/notificationEngine'
 
 const FitnessContext = createContext(null)
@@ -49,7 +51,7 @@ function reducer(state, action) {
       const loaded = {
         ...state,
         isAuthenticated: true,
-        user,
+        user: data.profile || user,
         workouts: data.workouts || [],
         meals: data.meals || [],
         waterLogs: data.waterLogs || [],
@@ -213,18 +215,30 @@ export function FitnessProvider({ children }) {
   // Persist user data on every meaningful state change
   useEffect(() => {
     if (!state.isAuthenticated || !state.user?.id) return
+    
+    const userData = {
+      profile: state.user,
+      workouts: state.workouts,
+      meals: state.meals,
+      waterLogs: state.waterLogs,
+      progressEntries: state.progressEntries,
+      goals: state.goals,
+      reminders: state.reminders,
+      aiMessages: state.aiMessages,
+    }
+    
+    // Save to localStorage for offline support
     try {
-      localStorage.setItem(`fitData_${state.user.id}`, JSON.stringify({
-        user: state.user,
-        workouts: state.workouts,
-        meals: state.meals,
-        waterLogs: state.waterLogs,
-        progressEntries: state.progressEntries,
-        goals: state.goals,
-        reminders: state.reminders,
-        aiMessages: state.aiMessages,
-      }))
+      localStorage.setItem(`fitData_${state.user.id}`, JSON.stringify(userData))
     } catch (_) {}
+    
+    // Save to Firebase Firestore
+    const currentUser = auth.currentUser
+    if (currentUser && currentUser.uid === state.user.id) {
+      const userDocRef = doc(db, 'users', state.user.id)
+      setDoc(userDocRef, userData, { merge: true })
+        .catch(err => console.error('Error saving to Firestore:', err))
+    }
   }, [
     state.isAuthenticated, state.user, state.workouts, state.meals,
     state.waterLogs, state.progressEntries, state.goals, state.reminders, state.aiMessages,
