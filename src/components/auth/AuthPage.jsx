@@ -2,6 +2,9 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Zap, Mail, Lock, User, Eye, EyeOff, ArrowRight, Check, ChevronLeft, Dumbbell, Salad, Bot, TrendingUp, Bell, Leaf, Flame, Trophy, Scale, Timer } from 'lucide-react'
 import clsx from 'clsx'
+import { auth, db } from '../../firebase'
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth'
+import { doc, setDoc, getDoc, getDocs, query, where, collection } from 'firebase/firestore'
 
 const FITNESS_LEVELS = [
   { id: 'beginner', label: 'Beginner', desc: '0–1 yr', Icon: Leaf, color: '#10b981' },
@@ -92,37 +95,60 @@ export default function AuthPage({ onAuth }) {
     if (Object.keys(e).length) { setErrors(e); return }
 
     setLoading(true)
-    await new Promise(r => setTimeout(r, 500))
-
-    const users = JSON.parse(localStorage.getItem('fitUsers') || '[]')
-    const user = users.find(u => u.email === signIn.email.trim().toLowerCase() && u.passwordHash === btoa(signIn.password))
-    if (!user) {
-      setErrors({ form: 'Email or password is incorrect.' })
-      setLoading(false)
-      return
+    try {
+      const result = await signInWithEmailAndPassword(auth, signIn.email.trim().toLowerCase(), signIn.password)
+      const uid = result.user.uid
+      
+      // Fetch user profile from Firestore
+      const userDocRef = doc(db, 'users', uid)
+      const userDocSnap = await getDoc(userDocRef)
+      
+      if (userDocSnap.exists()) {
+        const userData = userDocSnap.data()
+        onAuth({ user: userData.profile || {}, data: userData })
+      } else {
+        setErrors({ form: 'User profile not found.' })
+        setLoading(false)
+        return
+      }
+    } catch (error) {
+      let message = 'Email or password is incorrect.'
+      if (error.code === 'auth/user-not-found') message = 'No account found with this email.'
+      if (error.code === 'auth/wrong-password') message = 'Password is incorrect.'
+      if (error.code === 'auth/invalid-email') message = 'Invalid email address.'
+      setErrors({ form: message })
     }
-    localStorage.setItem('fitCurrentUserId', user.id)
-    const raw = localStorage.getItem(`fitData_${user.id}`)
-    const data = raw ? JSON.parse(raw) : {}
     setLoading(false)
-    onAuth({ user: data.user || user, data })
   }
 
   // ── Sign Up step 1 ─────────────────────────────────────────
-  const validateAcct = () => {
+  const validateAcct = async () => {
     const e = {}
     if (!acct.name.trim()) e.name = 'Name required'
     if (!acct.email.includes('@')) e.email = 'Valid email required'
     if (acct.password.length < 6) e.password = 'Minimum 6 characters'
     if (acct.password !== acct.confirm) e.confirm = 'Passwords do not match'
-    const users = JSON.parse(localStorage.getItem('fitUsers') || '[]')
-    if (users.some(u => u.email === acct.email.toLowerCase())) e.email = 'Email already registered'
+    
+    // Check if email already exists in Firestore
+    if (!e.email) {
+      try {
+        const usersRef = collection(db, 'users')
+        const q = query(usersRef, where('emailLower', '==', acct.email.toLowerCase()))
+        const querySnap = await getDocs(q)
+        if (!querySnap.empty) {
+          e.email = 'Email already registered'
+        }
+      } catch (error) {
+        console.warn('Error checking email:', error)
+      }
+    }
+    
     setErrors(e)
     return !Object.keys(e).length
   }
 
-  const handleNext = () => {
-    if (!validateAcct()) return
+  const handleNext = async () => {
+    if (!await validateAcct()) return
     setF('age', fit.age) // trigger macro recalc
     setStep(2)
   }
@@ -140,53 +166,65 @@ export default function AuthPage({ onAuth }) {
   const handleSignUp = async () => {
     if (!validateFit()) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 600))
+    try {
+      // Create user in Firebase Auth
+      const result = await createUserWithEmailAndPassword(auth, acct.email.trim().toLowerCase(), acct.password)
+      const uid = result.user.uid
 
-    const userId = `user_${Date.now()}`
-    const macros = calcMacros(fit)
+      const macros = calcMacros(fit)
 
-    const userProfile = {
-      id: userId,
-      name: acct.name.trim(),
-      email: acct.email.trim().toLowerCase(),
-      age: parseFloat(fit.age),
-      height: parseFloat(fit.height),
-      weight: parseFloat(fit.weight),
-      gender: fit.gender,
-      fitnessLevel: fit.fitnessLevel,
-      primaryGoal: fit.primaryGoal,
-      calorieGoal: macros.calorieGoal || parseInt(fit.calorieGoal) || 2000,
-      proteinGoal: macros.proteinGoal || parseInt(fit.proteinGoal) || 150,
-      carbsGoal: macros.carbsGoal || parseInt(fit.carbsGoal) || 200,
-      fatGoal: macros.fatGoal || parseInt(fit.fatGoal) || 65,
-      waterGoal: parseInt(fit.waterGoal) || 8,
-      weeklyWorkoutGoal: parseInt(fit.weeklyWorkoutGoal) || 4,
-      memberSince: new Date().toISOString().split('T')[0],
+      const userProfile = {
+        id: uid,
+        name: acct.name.trim(),
+        email: acct.email.trim().toLowerCase(),
+        emailLower: acct.email.trim().toLowerCase(),
+        age: parseFloat(fit.age),
+        height: parseFloat(fit.height),
+        weight: parseFloat(fit.weight),
+        gender: fit.gender,
+        fitnessLevel: fit.fitnessLevel,
+        primaryGoal: fit.primaryGoal,
+        calorieGoal: macros.calorieGoal || parseInt(fit.calorieGoal) || 2000,
+        proteinGoal: macros.proteinGoal || parseInt(fit.proteinGoal) || 150,
+        carbsGoal: macros.carbsGoal || parseInt(fit.carbsGoal) || 200,
+        fatGoal: macros.fatGoal || parseInt(fit.fatGoal) || 65,
+        waterGoal: parseInt(fit.waterGoal) || 8,
+        weeklyWorkoutGoal: parseInt(fit.weeklyWorkoutGoal) || 4,
+        memberSince: new Date().toISOString().split('T')[0],
+      }
+
+      const firstName = acct.name.trim().split(' ')[0]
+      const welcomeMsg = `Welcome to PulseAI, ${firstName}! 🎉\n\nI'm your personal AI fitness coach. Based on your profile, here's what I've calculated for you:\n\n• **Daily calories:** ${userProfile.calorieGoal} kcal\n• **Protein goal:** ${userProfile.proteinGoal}g (supports muscle & recovery)\n• **Water goal:** ${userProfile.waterGoal} glasses/day\n• **Weekly workouts:** ${userProfile.weeklyWorkoutGoal} sessions\n\nThese are tailored to your goal of "${PRIMARY_GOALS.find(g => g.id === fit.primaryGoal)?.label}". You can adjust them in your Profile.\n\nReady to start? Ask me anything — workouts, nutrition, motivation, form advice. I'm here 24/7! 💪`
+
+      const userData = {
+        profile: userProfile,
+        workouts: [],
+        meals: [],
+        waterLogs: [],
+        progressEntries: [],
+        goals: [],
+        reminders: [],
+        aiMessages: [{ id: 'welcome', role: 'assistant', content: welcomeMsg, timestamp: new Date().toISOString() }],
+      }
+
+      // Save user data to Firestore
+      const userDocRef = doc(db, 'users', uid)
+      await setDoc(userDocRef, userData)
+
+      // Also keep localStorage for offline support
+      localStorage.setItem('fitCurrentUserId', uid)
+      localStorage.setItem(`fitData_${uid}`, JSON.stringify(userData))
+
+      setLoading(false)
+      onAuth({ user: userProfile, data: userData })
+    } catch (error) {
+      let message = 'Error creating account. Please try again.'
+      if (error.code === 'auth/email-already-in-use') message = 'Email already registered.'
+      if (error.code === 'auth/weak-password') message = 'Password should be at least 6 characters.'
+      if (error.code === 'auth/invalid-email') message = 'Invalid email address.'
+      setErrors({ form: message })
+      setLoading(false)
     }
-
-    const firstName = acct.name.trim().split(' ')[0]
-    const welcomeMsg = `Welcome to PulseAI, ${firstName}! 🎉\n\nI'm your personal AI fitness coach. Based on your profile, here's what I've calculated for you:\n\n• **Daily calories:** ${userProfile.calorieGoal} kcal\n• **Protein goal:** ${userProfile.proteinGoal}g (supports muscle & recovery)\n• **Water goal:** ${userProfile.waterGoal} glasses/day\n• **Weekly workouts:** ${userProfile.weeklyWorkoutGoal} sessions\n\nThese are tailored to your goal of "${PRIMARY_GOALS.find(g => g.id === fit.primaryGoal)?.label}". You can adjust them in your Profile.\n\nReady to start? Ask me anything — workouts, nutrition, motivation, form advice. I'm here 24/7! 💪`
-
-    const userData = {
-      user: userProfile,
-      workouts: [],
-      meals: [],
-      waterLogs: [],
-      progressEntries: [],
-      goals: [],
-      reminders: [],
-      aiMessages: [{ id: 'welcome', role: 'assistant', content: welcomeMsg, timestamp: new Date().toISOString() }],
-    }
-
-    // Save auth record
-    const users = JSON.parse(localStorage.getItem('fitUsers') || '[]')
-    users.push({ id: userId, email: userProfile.email, passwordHash: btoa(acct.password) })
-    localStorage.setItem('fitUsers', JSON.stringify(users))
-    localStorage.setItem('fitCurrentUserId', userId)
-    localStorage.setItem(`fitData_${userId}`, JSON.stringify(userData))
-
-    setLoading(false)
-    onAuth({ user: userProfile, data: userData })
   }
 
   const switchMode = (m) => { setMode(m); setStep(1); setErrors({}) }
